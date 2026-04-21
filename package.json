@@ -4,9 +4,7 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview"
+    "build": "vite build"
   },
   "dependencies": {
     "jszip": "^3.10.1",
@@ -16,9 +14,6 @@
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.1",
-    "vite": "^5.4.2"
-  },
-  "scripts": {
-    "build": "npx vite build"
+    "vite": "^5.4.21"
   }
 }
