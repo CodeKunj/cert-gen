@@ -12,12 +12,20 @@ function replaceInXml(xml, placeholder, value) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
   const esc = placeholder.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  xml = xml.replace(new RegExp(esc, "g"), safe);
+  let replaced = false;
+  xml = xml.replace(new RegExp(esc, "g"), () => {
+    replaced = true;
+    return safe;
+  });
   const frag = placeholder
     .split("")
     .map((c) => c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(?:<[^>]+>)*")
     .join("");
-  return xml.replace(new RegExp(frag, "g"), safe);
+  xml = xml.replace(new RegExp(frag, "g"), () => {
+    replaced = true;
+    return safe;
+  });
+  return { xml, replaced };
 }
 
 export default function App() {
@@ -54,6 +62,12 @@ export default function App() {
 
   const generate = async () => {
     setError("");
+    const marker = placeholder.trim();
+    if (!marker) {
+      setError("Placeholder cannot be empty.");
+      return;
+    }
+
     setProgress({ pct: 0, msg: "Reading template…", done: false });
 
     const templateBytes = await docxFile.arrayBuffer();
@@ -68,12 +82,21 @@ export default function App() {
       const xmlFiles = Object.keys(docZip.files).filter(
         (n) => n.endsWith(".xml") || n.endsWith(".rels")
       );
+      let foundAnyPlaceholder = false;
 
       for (const xmlName of xmlFiles) {
         const content = await docZip.files[xmlName].async("string");
-        if (content.includes(placeholder)) {
-          docZip.file(xmlName, replaceInXml(content, placeholder, name));
+        const result = replaceInXml(content, marker, name);
+        if (result.replaced) {
+          foundAnyPlaceholder = true;
+          docZip.file(xmlName, result.xml);
         }
+      }
+
+      if (!foundAnyPlaceholder) {
+        setProgress(null);
+        setError(`Placeholder \"${marker}\" was not found in template. Make sure it exactly matches the text inside the .docx file.`);
+        return;
       }
 
       const blob = await docZip.generateAsync({ type: "blob" });
