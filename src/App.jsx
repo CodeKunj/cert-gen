@@ -2,7 +2,7 @@ import { useState, useCallback } from "react";
 import * as XLSX from "xlsx";
 import JSZip from "jszip";
 import DropZone from "./components/DropZone";
-// import ProgressCard from "./components/ProgressCard";
+import ProgressCard from "./components/ProgressCard";
 import "./App.css";
 
 function replaceInXml(xml, placeholder, value) {
@@ -103,7 +103,6 @@ export default function App() {
 
   return (
     <div className="app">
-      {/* <BubbleBackground /> */}
       <header className="header">
         <div className="badge">
           <span className="badge-dot" />

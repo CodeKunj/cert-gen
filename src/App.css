@@ -30,10 +30,6 @@ body {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
-  /* position: relative;   
-  z-index: 0;          
-  background: #0e0f0e;  
-  cursor: none;        */
 }
 
 /* ── Header ── */
@@ -318,8 +314,3 @@ footer {
   color: var(--hint);
   border-top: 1px solid var(--border);
 }
-
-/* .step-card, .btn-gen, .progress-wrap, .header, main, footer {
-  position: relative;
-  z-index: 1;
-} */
