@@ -126,6 +126,12 @@ export default function App() {
 
   return (
     <div className="app">
+      <div className="live-bg" aria-hidden="true">
+        <div className="aurora aurora-a" />
+        <div className="aurora aurora-b" />
+        <div className="grid-drift" />
+      </div>
+
       <header className="header">
         <div className="badge">
           <span className="badge-dot" />

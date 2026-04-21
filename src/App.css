@@ -30,6 +30,66 @@ body {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.live-bg {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.aurora {
+  position: absolute;
+  width: 48vmax;
+  height: 48vmax;
+  filter: blur(36px);
+  opacity: 0.38;
+  border-radius: 50%;
+}
+
+.aurora-a {
+  top: -14vmax;
+  left: -10vmax;
+  background: radial-gradient(circle at 30% 30%, #ffe3a6 0%, #e9f5b4 40%, rgba(255, 255, 255, 0) 72%);
+  animation: floatAuroraA 18s ease-in-out infinite alternate;
+}
+
+.aurora-b {
+  right: -14vmax;
+  bottom: -18vmax;
+  background: radial-gradient(circle at 68% 35%, #9adbd0 0%, #c9ecff 45%, rgba(255, 255, 255, 0) 70%);
+  animation: floatAuroraB 22s ease-in-out infinite alternate;
+}
+
+.grid-drift {
+  position: absolute;
+  inset: -25%;
+  background-image:
+    linear-gradient(rgba(20, 20, 20, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(20, 20, 20, 0.05) 1px, transparent 1px);
+  background-size: 42px 42px;
+  mask-image: radial-gradient(circle at center, rgba(0, 0, 0, 0.7), rgba(0, 0, 0, 0));
+  animation: driftGrid 30s linear infinite;
+}
+
+@keyframes floatAuroraA {
+  0% { transform: translate3d(0, 0, 0) scale(1); }
+  100% { transform: translate3d(9vmax, 6vmax, 0) scale(1.12); }
+}
+
+@keyframes floatAuroraB {
+  0% { transform: translate3d(0, 0, 0) scale(1); }
+  100% { transform: translate3d(-8vmax, -7vmax, 0) scale(1.08); }
+}
+
+@keyframes driftGrid {
+  0% { transform: translate3d(0, 0, 0) rotate(0deg); }
+  100% { transform: translate3d(42px, 30px, 0) rotate(0.25deg); }
 }
 
 /* ── Header ── */
