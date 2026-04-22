@@ -68,10 +68,11 @@ async function createFilledDocxBlob(templateBytes, marker, name) {
 }
 
 async function convertDocxBlobToPdfViaServer(docxBlob) {
+  const endpoint = import.meta.env.VITE_CONVERTER_API_URL || "/api/convert";
   const formData = new FormData();
   formData.append("file", docxBlob, "certificate.docx");
 
-  const response = await fetch("/api/convert", {
+  const response = await fetch(endpoint, {
     method: "POST",
     body: formData,
   });
@@ -224,7 +225,7 @@ export default function App() {
             }
             if (!notice) {
               setNotice(
-                "Server PDF engine is unavailable, so browser fallback was used. PDF formatting may differ from the DOCX template."
+                "Server PDF engine is unavailable, so browser fallback was used. For template-accurate PDFs, set VITE_CONVERTER_API_URL to a LibreOffice-enabled converter service."
               );
             }
             pdfBlob = await convertDocxBlobToPdfInBrowser(filledDocxBlob);
