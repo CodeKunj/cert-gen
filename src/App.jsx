@@ -42,7 +42,6 @@ function sanitizeFileName(name, fallback) {
 
 function keepReplacementOnOneLine(value) {
   return String(value || "")
-    .trim()
     .replace(/ /g, "\u00A0")
     .replace(/-/g, "\u2011");
 }
