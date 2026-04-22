@@ -1,6 +1,9 @@
 import { useState, useCallback } from "react";
 import * as XLSX from "xlsx";
 import JSZip from "jszip";
+import mammoth from "mammoth/mammoth.browser";
+import html2canvas from "html2canvas";
+import { jsPDF } from "jspdf";
 import DropZone from "./components/DropZone";
 import ProgressCard from "./components/ProgressCard";
 import "./App.css";
@@ -28,12 +31,84 @@ function replaceInXml(xml, placeholder, value) {
   return { xml, replaced };
 }
 
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function replaceInHtml(html, placeholder, value) {
+  const safe = escapeHtml(value);
+  const esc = placeholder.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  let replaced = false;
+  html = html.replace(new RegExp(esc, "g"), () => {
+    replaced = true;
+    return safe;
+  });
+  return { html, replaced };
+}
+
+function sanitizeFileName(name, fallback) {
+  return (
+    name.replace(/[^a-zA-Z0-9 _\-]/g, "").replace(/\s+/g, "_") || fallback
+  );
+}
+
+async function htmlToPdfBlob(html) {
+  const host = document.createElement("div");
+  host.style.position = "fixed";
+  host.style.left = "-10000px";
+  host.style.top = "0";
+  host.style.width = "1123px";
+  host.style.background = "#ffffff";
+  host.style.pointerEvents = "none";
+
+  const sheet = document.createElement("div");
+  sheet.style.width = "1123px";
+  sheet.style.boxSizing = "border-box";
+  sheet.style.padding = "72px";
+  sheet.style.background = "#ffffff";
+  sheet.style.color = "#111111";
+  sheet.innerHTML = html;
+
+  host.appendChild(sheet);
+  document.body.appendChild(host);
+
+  try {
+    await new Promise((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(resolve));
+    });
+
+    const canvas = await html2canvas(sheet, {
+      backgroundColor: "#ffffff",
+      scale: 2,
+      useCORS: true,
+    });
+
+    const imageData = canvas.toDataURL("image/png");
+    const pdf = new jsPDF({
+      orientation: canvas.width >= canvas.height ? "landscape" : "portrait",
+      unit: "px",
+      format: [canvas.width, canvas.height],
+    });
+
+    pdf.addImage(imageData, "PNG", 0, 0, canvas.width, canvas.height);
+    return pdf.output("blob");
+  } finally {
+    document.body.removeChild(host);
+  }
+}
+
 export default function App() {
   const [docxFile, setDocxFile] = useState(null);
   const [rows, setRows] = useState([]);
   const [columns, setColumns] = useState([]);
   const [selectedCol, setSelectedCol] = useState("");
   const [placeholder, setPlaceholder] = useState("{{NAME}}");
+  const [outputFormat, setOutputFormat] = useState("docx");
   const [progress, setProgress] = useState(null);
   const [error, setError] = useState("");
 
@@ -68,60 +143,90 @@ export default function App() {
       return;
     }
 
-    setProgress({ pct: 0, msg: "Reading template…", done: false });
+    try {
+      setProgress({
+        pct: 0,
+        msg: outputFormat === "pdf" ? "Preparing PDF template…" : "Reading template…",
+        done: false,
+      });
 
-    const templateBytes = await docxFile.arrayBuffer();
-    const outZip = new JSZip();
+      const templateBytes = await docxFile.arrayBuffer();
+      const outZip = new JSZip();
 
-    for (let i = 0; i < names.length; i++) {
-      const name = names[i];
-      const pct = 10 + (i / names.length) * 85;
-      setProgress({ pct, msg: `Generating ${i + 1}/${names.length}: ${name}`, done: false });
+      if (outputFormat === "pdf") {
+        const conversion = await mammoth.convertToHtml({ arrayBuffer: templateBytes });
+        const templateHtml = conversion.value;
 
-      const docZip = await JSZip.loadAsync(templateBytes);
-      const xmlFiles = Object.keys(docZip.files).filter(
-        (n) => n.endsWith(".xml") || n.endsWith(".rels")
-      );
-      let foundAnyPlaceholder = false;
+        for (let i = 0; i < names.length; i++) {
+          const name = names[i];
+          const pct = 10 + (i / names.length) * 85;
+          setProgress({ pct, msg: `Generating ${i + 1}/${names.length}: ${name}`, done: false });
 
-      for (const xmlName of xmlFiles) {
-        const content = await docZip.files[xmlName].async("string");
-        const result = replaceInXml(content, marker, name);
-        if (result.replaced) {
-          foundAnyPlaceholder = true;
-          docZip.file(xmlName, result.xml);
+          const result = replaceInHtml(templateHtml, marker, name);
+          if (!result.replaced) {
+            setProgress(null);
+            setError(`Placeholder \"${marker}\" was not found in template. Make sure it exactly matches the text inside the .docx file.`);
+            return;
+          }
+
+          const blob = await htmlToPdfBlob(result.html);
+          const safe = sanitizeFileName(name, `cert_${i + 1}`);
+          outZip.file(`${safe}.pdf`, blob);
+          await new Promise((r) => setTimeout(r, 0));
+        }
+      } else {
+        for (let i = 0; i < names.length; i++) {
+          const name = names[i];
+          const pct = 10 + (i / names.length) * 85;
+          setProgress({ pct, msg: `Generating ${i + 1}/${names.length}: ${name}`, done: false });
+
+          const docZip = await JSZip.loadAsync(templateBytes);
+          const xmlFiles = Object.keys(docZip.files).filter(
+            (n) => n.endsWith(".xml") || n.endsWith(".rels")
+          );
+          let foundAnyPlaceholder = false;
+
+          for (const xmlName of xmlFiles) {
+            const content = await docZip.files[xmlName].async("string");
+            const result = replaceInXml(content, marker, name);
+            if (result.replaced) {
+              foundAnyPlaceholder = true;
+              docZip.file(xmlName, result.xml);
+            }
+          }
+
+          if (!foundAnyPlaceholder) {
+            setProgress(null);
+            setError(`Placeholder \"${marker}\" was not found in template. Make sure it exactly matches the text inside the .docx file.`);
+            return;
+          }
+
+          const blob = await docZip.generateAsync({ type: "blob" });
+          const safe = sanitizeFileName(name, `cert_${i + 1}`);
+          outZip.file(`${safe}.docx`, blob);
+          await new Promise((r) => setTimeout(r, 0));
         }
       }
 
-      if (!foundAnyPlaceholder) {
-        setProgress(null);
-        setError(`Placeholder \"${marker}\" was not found in template. Make sure it exactly matches the text inside the .docx file.`);
-        return;
-      }
+      setProgress({ pct: 97, msg: "Creating ZIP…", done: false });
+      const zipBlob = await outZip.generateAsync({ type: "blob" });
+      setProgress({
+        pct: 100,
+        msg: `${names.length} certificate${names.length !== 1 ? "s" : ""} generated!`,
+        done: true,
+      });
 
-      const blob = await docZip.generateAsync({ type: "blob" });
-      const safe =
-        name.replace(/[^a-zA-Z0-9 _\-]/g, "").replace(/\s+/g, "_") ||
-        "cert_" + (i + 1);
-      outZip.file(safe + ".docx", blob);
-      await new Promise((r) => setTimeout(r, 0));
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(zipBlob);
+      a.download = outputFormat === "pdf" ? "certificates-pdf.zip" : "certificates.zip";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+    } catch (err) {
+      setProgress(null);
+      setError("Could not generate certificates: " + err.message);
     }
-
-    setProgress({ pct: 97, msg: "Creating ZIP…", done: false });
-    const zipBlob = await outZip.generateAsync({ type: "blob" });
-    setProgress({
-      pct: 100,
-      msg: `${names.length} certificate${names.length !== 1 ? "s" : ""} generated!`,
-      done: true,
-    });
-
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(zipBlob);
-    a.download = "certificates.zip";
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
   };
 
   return (
@@ -139,7 +244,7 @@ export default function App() {
         </div>
         <h1>Cert&thinsp;/&thinsp;Gen</h1>
         <p className="sub">
-          Upload template &amp; student list — download a ZIP of filled certificates
+          Upload template &amp; student list — choose DOCX or PDF output for the finished certificates
         </p>
       </header>
 
@@ -175,6 +280,18 @@ export default function App() {
         <div className="step-card">
           <div className="step-num">02 — Settings</div>
           <div className="settings-row">
+            <div className="field">
+              <label htmlFor="format-select">Output format</label>
+              <select
+                id="format-select"
+                value={outputFormat}
+                onChange={(e) => setOutputFormat(e.target.value)}
+              >
+                <option value="docx">DOCX</option>
+                <option value="pdf">PDF</option>
+              </select>
+              <span className="field-hint">Choose the file type for each certificate</span>
+            </div>
             <div className="field">
               <label htmlFor="placeholder">Placeholder in template</label>
               <input
@@ -224,7 +341,7 @@ export default function App() {
             <polyline points="7 10 12 15 17 10"/>
             <line x1="12" y1="15" x2="12" y2="3"/>
           </svg>
-          Generate &amp; Download ZIP
+            Generate &amp; Download {outputFormat.toUpperCase()} ZIP
         </button>
 
         {progress && <ProgressCard progress={progress} />}

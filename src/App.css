@@ -244,11 +244,11 @@ main {
 /* ── Settings ── */
 .settings-row {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 1rem;
 }
 
-@media (max-width: 480px) {
+@media (max-width: 720px) {
   .settings-row { grid-template-columns: 1fr; }
 }
 
