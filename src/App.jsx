@@ -81,6 +81,17 @@ async function convertDocxBlobToPdfInBrowser(docxBlob) {
   host.style.width = "max-content";
   host.style.background = "#ffffff";
   host.style.pointerEvents = "none";
+
+  const noWordBreakStyle = document.createElement("style");
+  noWordBreakStyle.textContent = `
+    .docx, .docx * {
+      word-break: keep-all !important;
+      overflow-wrap: normal !important;
+      hyphens: none !important;
+    }
+  `;
+  host.appendChild(noWordBreakStyle);
+
   document.body.appendChild(host);
 
   try {
