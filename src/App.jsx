@@ -1,9 +1,6 @@
 import { useState, useCallback } from "react";
 import * as XLSX from "xlsx";
 import JSZip from "jszip";
-import { renderAsync } from "docx-preview";
-import html2canvas from "html2canvas";
-import { jsPDF } from "jspdf";
 import DropZone from "./components/DropZone";
 import ProgressCard from "./components/ProgressCard";
 import "./App.css";
@@ -67,64 +64,21 @@ async function createFilledDocxBlob(templateBytes, marker, name) {
   return docZip.generateAsync({ type: "blob" });
 }
 
-async function docxToPdfBlob(docxBlob) {
-  const host = document.createElement("div");
-  host.style.position = "fixed";
-  host.style.left = "-10000px";
-  host.style.top = "0";
-  host.style.width = "max-content";
-  host.style.background = "#ffffff";
-  host.style.pointerEvents = "none";
-  document.body.appendChild(host);
+async function convertDocxBlobToPdfViaServer(docxBlob) {
+  const formData = new FormData();
+  formData.append("file", docxBlob, "certificate.docx");
 
-  try {
-    const docxBuffer = await docxBlob.arrayBuffer();
-    await renderAsync(docxBuffer, host, undefined, {
-      inWrapper: true,
-      useBase64URL: true,
-      breakPages: true,
-    });
+  const response = await fetch("/api/convert", {
+    method: "POST",
+    body: formData,
+  });
 
-    await new Promise((resolve) => {
-      requestAnimationFrame(() => requestAnimationFrame(resolve));
-    });
-
-    const pageNodes = host.querySelectorAll(".docx-page");
-    const targets = pageNodes.length ? Array.from(pageNodes) : [host];
-    let pdf = null;
-
-    for (let i = 0; i < targets.length; i++) {
-      const page = targets[i];
-      const canvas = await html2canvas(page, {
-        backgroundColor: "#ffffff",
-        scale: 2,
-        useCORS: true,
-      });
-
-      const orientation = canvas.width >= canvas.height ? "landscape" : "portrait";
-
-      if (!pdf) {
-        pdf = new jsPDF({
-          orientation,
-          unit: "px",
-          format: [canvas.width, canvas.height],
-        });
-      } else {
-        pdf.addPage([canvas.width, canvas.height], orientation);
-      }
-
-      const imageData = canvas.toDataURL("image/png");
-      pdf.addImage(imageData, "PNG", 0, 0, canvas.width, canvas.height);
-    }
-
-    if (!pdf) {
-      throw new Error("Could not render DOCX page for PDF conversion.");
-    }
-
-    return pdf.output("blob");
-  } finally {
-    document.body.removeChild(host);
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || "Server failed to convert DOCX to PDF.");
   }
+
+  return response.blob();
 }
 
 export default function App() {
@@ -191,7 +145,7 @@ export default function App() {
         const safe = sanitizeFileName(name, `cert_${i + 1}`);
 
         if (outputFormat === "pdf") {
-          const pdfBlob = await docxToPdfBlob(filledDocxBlob);
+          const pdfBlob = await convertDocxBlobToPdfViaServer(filledDocxBlob);
           outZip.file(`${safe}.pdf`, pdfBlob);
         } else {
           outZip.file(`${safe}.docx`, filledDocxBlob);
@@ -358,7 +312,9 @@ export default function App() {
         {progress && <ProgressCard progress={progress} />}
       </main>
 
-      <footer>All processing happens in your browser - no data is uploaded anywhere.</footer>
+      <footer>
+        DOCX is generated in your browser. PDF conversion uses your server to preserve template formatting.
+      </footer>
     </div>
   );
 }
