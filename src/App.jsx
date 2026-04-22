@@ -1,6 +1,9 @@
 import { useState, useCallback } from "react";
 import * as XLSX from "xlsx";
 import JSZip from "jszip";
+import { renderAsync } from "docx-preview";
+import html2canvas from "html2canvas";
+import { jsPDF } from "jspdf";
 import DropZone from "./components/DropZone";
 import ProgressCard from "./components/ProgressCard";
 import "./App.css";
@@ -81,6 +84,71 @@ async function convertDocxBlobToPdfViaServer(docxBlob) {
   return response.blob();
 }
 
+function isServerEngineUnavailable(err) {
+  const msg = String(err?.message || "");
+  return /conversion engine is unavailable|install libreoffice|soffice/i.test(msg);
+}
+
+async function convertDocxBlobToPdfInBrowser(docxBlob) {
+  const host = document.createElement("div");
+  host.style.position = "fixed";
+  host.style.left = "-10000px";
+  host.style.top = "0";
+  host.style.width = "max-content";
+  host.style.background = "#ffffff";
+  host.style.pointerEvents = "none";
+  document.body.appendChild(host);
+
+  try {
+    const docxBuffer = await docxBlob.arrayBuffer();
+    await renderAsync(docxBuffer, host, undefined, {
+      inWrapper: true,
+      useBase64URL: true,
+      breakPages: true,
+    });
+
+    await new Promise((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(resolve));
+    });
+
+    const pageNodes = host.querySelectorAll(".docx-page");
+    const targets = pageNodes.length ? Array.from(pageNodes) : [host];
+    let pdf = null;
+
+    for (let i = 0; i < targets.length; i++) {
+      const page = targets[i];
+      const canvas = await html2canvas(page, {
+        backgroundColor: "#ffffff",
+        scale: 2,
+        useCORS: true,
+      });
+
+      const orientation = canvas.width >= canvas.height ? "landscape" : "portrait";
+
+      if (!pdf) {
+        pdf = new jsPDF({
+          orientation,
+          unit: "px",
+          format: [canvas.width, canvas.height],
+        });
+      } else {
+        pdf.addPage([canvas.width, canvas.height], orientation);
+      }
+
+      const imageData = canvas.toDataURL("image/png");
+      pdf.addImage(imageData, "PNG", 0, 0, canvas.width, canvas.height);
+    }
+
+    if (!pdf) {
+      throw new Error("Could not render DOCX page for browser PDF conversion.");
+    }
+
+    return pdf.output("blob");
+  } finally {
+    document.body.removeChild(host);
+  }
+}
+
 export default function App() {
   const [docxFile, setDocxFile] = useState(null);
   const [rows, setRows] = useState([]);
@@ -90,6 +158,7 @@ export default function App() {
   const [outputFormat, setOutputFormat] = useState("docx");
   const [progress, setProgress] = useState(null);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
 
   const handleExcel = useCallback((file) => {
     const reader = new FileReader();
@@ -120,6 +189,7 @@ export default function App() {
 
   const generate = async () => {
     setError("");
+    setNotice("");
     const marker = placeholder.trim();
     if (!marker) {
       setError("Placeholder cannot be empty.");
@@ -145,7 +215,20 @@ export default function App() {
         const safe = sanitizeFileName(name, `cert_${i + 1}`);
 
         if (outputFormat === "pdf") {
-          const pdfBlob = await convertDocxBlobToPdfViaServer(filledDocxBlob);
+          let pdfBlob;
+          try {
+            pdfBlob = await convertDocxBlobToPdfViaServer(filledDocxBlob);
+          } catch (serverErr) {
+            if (!isServerEngineUnavailable(serverErr)) {
+              throw serverErr;
+            }
+            if (!notice) {
+              setNotice(
+                "Server PDF engine is unavailable, so browser fallback was used. PDF formatting may differ from the DOCX template."
+              );
+            }
+            pdfBlob = await convertDocxBlobToPdfInBrowser(filledDocxBlob);
+          }
           outZip.file(`${safe}.pdf`, pdfBlob);
         } else {
           outZip.file(`${safe}.docx`, filledDocxBlob);
@@ -290,6 +373,7 @@ export default function App() {
         </div>
 
         {error && <div className="error-card">{error}</div>}
+        {notice && <div className="error-card">{notice}</div>}
 
         <button className="btn-gen" disabled={!canGenerate} onClick={generate}>
           <svg
