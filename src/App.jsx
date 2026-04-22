@@ -67,29 +67,6 @@ async function createFilledDocxBlob(templateBytes, marker, name) {
   return docZip.generateAsync({ type: "blob" });
 }
 
-async function convertDocxBlobToPdfViaServer(docxBlob) {
-  const endpoint = import.meta.env.VITE_CONVERTER_API_URL || "/api/convert";
-  const formData = new FormData();
-  formData.append("file", docxBlob, "certificate.docx");
-
-  const response = await fetch(endpoint, {
-    method: "POST",
-    body: formData,
-  });
-
-  if (!response.ok) {
-    const message = await response.text();
-    throw new Error(message || "Server failed to convert DOCX to PDF.");
-  }
-
-  return response.blob();
-}
-
-function isServerEngineUnavailable(err) {
-  const msg = String(err?.message || "");
-  return /conversion engine is unavailable|install libreoffice|soffice/i.test(msg);
-}
-
 async function convertDocxBlobToPdfInBrowser(docxBlob) {
   const host = document.createElement("div");
   host.style.position = "fixed";
@@ -159,7 +136,6 @@ export default function App() {
   const [outputFormat, setOutputFormat] = useState("docx");
   const [progress, setProgress] = useState(null);
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
 
   const handleExcel = useCallback((file) => {
     const reader = new FileReader();
@@ -190,7 +166,6 @@ export default function App() {
 
   const generate = async () => {
     setError("");
-    setNotice("");
     const marker = placeholder.trim();
     if (!marker) {
       setError("Placeholder cannot be empty.");
@@ -216,20 +191,7 @@ export default function App() {
         const safe = sanitizeFileName(name, `cert_${i + 1}`);
 
         if (outputFormat === "pdf") {
-          let pdfBlob;
-          try {
-            pdfBlob = await convertDocxBlobToPdfViaServer(filledDocxBlob);
-          } catch (serverErr) {
-            if (!isServerEngineUnavailable(serverErr)) {
-              throw serverErr;
-            }
-            if (!notice) {
-              setNotice(
-                "Server PDF engine is unavailable, so browser fallback was used. For template-accurate PDFs, set VITE_CONVERTER_API_URL to a LibreOffice-enabled converter service."
-              );
-            }
-            pdfBlob = await convertDocxBlobToPdfInBrowser(filledDocxBlob);
-          }
+          const pdfBlob = await convertDocxBlobToPdfInBrowser(filledDocxBlob);
           outZip.file(`${safe}.pdf`, pdfBlob);
         } else {
           outZip.file(`${safe}.docx`, filledDocxBlob);
@@ -374,7 +336,6 @@ export default function App() {
         </div>
 
         {error && <div className="error-card">{error}</div>}
-        {notice && <div className="error-card">{notice}</div>}
 
         <button className="btn-gen" disabled={!canGenerate} onClick={generate}>
           <svg
@@ -398,7 +359,7 @@ export default function App() {
       </main>
 
       <footer>
-        DOCX is generated in your browser. PDF conversion uses your server to preserve template formatting.
+        DOCX and PDF are generated in your browser. PDF output is saved as a real .pdf file.
       </footer>
     </div>
   );
