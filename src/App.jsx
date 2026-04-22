@@ -1,7 +1,7 @@
 import { useState, useCallback } from "react";
 import * as XLSX from "xlsx";
 import JSZip from "jszip";
-import mammoth from "mammoth/mammoth.browser";
+import { renderAsync } from "docx-preview";
 import html2canvas from "html2canvas";
 import { jsPDF } from "jspdf";
 import DropZone from "./components/DropZone";
@@ -13,89 +13,114 @@ function replaceInXml(xml, placeholder, value) {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+    .replace(/\"/g, "&quot;");
+
   const esc = placeholder.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   let replaced = false;
+
   xml = xml.replace(new RegExp(esc, "g"), () => {
     replaced = true;
     return safe;
   });
+
   const frag = placeholder
     .split("")
     .map((c) => c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(?:<[^>]+>)*")
     .join("");
+
   xml = xml.replace(new RegExp(frag, "g"), () => {
     replaced = true;
     return safe;
   });
+
   return { xml, replaced };
 }
 
-function escapeHtml(value) {
-  return String(value)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
-function replaceInHtml(html, placeholder, value) {
-  const safe = escapeHtml(value);
-  const esc = placeholder.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  let replaced = false;
-  html = html.replace(new RegExp(esc, "g"), () => {
-    replaced = true;
-    return safe;
-  });
-  return { html, replaced };
-}
-
 function sanitizeFileName(name, fallback) {
-  return (
-    name.replace(/[^a-zA-Z0-9 _\-]/g, "").replace(/\s+/g, "_") || fallback
-  );
+  return name.replace(/[^a-zA-Z0-9 _\-]/g, "").replace(/\s+/g, "_") || fallback;
 }
 
-async function htmlToPdfBlob(html) {
+async function createFilledDocxBlob(templateBytes, marker, name) {
+  const docZip = await JSZip.loadAsync(templateBytes);
+  const xmlFiles = Object.keys(docZip.files).filter(
+    (n) => n.endsWith(".xml") || n.endsWith(".rels")
+  );
+  let foundAnyPlaceholder = false;
+
+  for (const xmlName of xmlFiles) {
+    const content = await docZip.files[xmlName].async("string");
+    const result = replaceInXml(content, marker, name);
+    if (result.replaced) {
+      foundAnyPlaceholder = true;
+      docZip.file(xmlName, result.xml);
+    }
+  }
+
+  if (!foundAnyPlaceholder) {
+    const err = new Error(
+      `Placeholder \"${marker}\" was not found in template. Make sure it exactly matches the text inside the .docx file.`
+    );
+    err.code = "PLACEHOLDER_NOT_FOUND";
+    throw err;
+  }
+
+  return docZip.generateAsync({ type: "blob" });
+}
+
+async function docxToPdfBlob(docxBlob) {
   const host = document.createElement("div");
   host.style.position = "fixed";
   host.style.left = "-10000px";
   host.style.top = "0";
-  host.style.width = "1123px";
+  host.style.width = "max-content";
   host.style.background = "#ffffff";
   host.style.pointerEvents = "none";
-
-  const sheet = document.createElement("div");
-  sheet.style.width = "1123px";
-  sheet.style.boxSizing = "border-box";
-  sheet.style.padding = "72px";
-  sheet.style.background = "#ffffff";
-  sheet.style.color = "#111111";
-  sheet.innerHTML = html;
-
-  host.appendChild(sheet);
   document.body.appendChild(host);
 
   try {
+    const docxBuffer = await docxBlob.arrayBuffer();
+    await renderAsync(docxBuffer, host, undefined, {
+      inWrapper: true,
+      useBase64URL: true,
+      breakPages: true,
+    });
+
     await new Promise((resolve) => {
       requestAnimationFrame(() => requestAnimationFrame(resolve));
     });
 
-    const canvas = await html2canvas(sheet, {
-      backgroundColor: "#ffffff",
-      scale: 2,
-      useCORS: true,
-    });
+    const pageNodes = host.querySelectorAll(".docx-page");
+    const targets = pageNodes.length ? Array.from(pageNodes) : [host];
+    let pdf = null;
 
-    const imageData = canvas.toDataURL("image/png");
-    const pdf = new jsPDF({
-      orientation: canvas.width >= canvas.height ? "landscape" : "portrait",
-      unit: "px",
-      format: [canvas.width, canvas.height],
-    });
+    for (let i = 0; i < targets.length; i++) {
+      const page = targets[i];
+      const canvas = await html2canvas(page, {
+        backgroundColor: "#ffffff",
+        scale: 2,
+        useCORS: true,
+      });
 
-    pdf.addImage(imageData, "PNG", 0, 0, canvas.width, canvas.height);
+      const orientation = canvas.width >= canvas.height ? "landscape" : "portrait";
+
+      if (!pdf) {
+        pdf = new jsPDF({
+          orientation,
+          unit: "px",
+          format: [canvas.width, canvas.height],
+        });
+      } else {
+        pdf.addPage([canvas.width, canvas.height], orientation);
+      }
+
+      const imageData = canvas.toDataURL("image/png");
+      pdf.addImage(imageData, "PNG", 0, 0, canvas.width, canvas.height);
+    }
+
+    if (!pdf) {
+      throw new Error("Could not render DOCX page for PDF conversion.");
+    }
+
     return pdf.output("blob");
   } finally {
     document.body.removeChild(host);
@@ -119,7 +144,11 @@ export default function App() {
         const wb = XLSX.read(new Uint8Array(e.target.result), { type: "array" });
         const ws = wb.Sheets[wb.SheetNames[0]];
         const data = XLSX.utils.sheet_to_json(ws, { defval: "" });
-        if (!data.length) { setError("Excel file is empty."); return; }
+        if (!data.length) {
+          setError("Excel file is empty.");
+          return;
+        }
+
         const cols = Object.keys(data[0]);
         setRows(data);
         setColumns(cols);
@@ -146,69 +175,32 @@ export default function App() {
     try {
       setProgress({
         pct: 0,
-        msg: outputFormat === "pdf" ? "Preparing PDF template…" : "Reading template…",
+        msg: outputFormat === "pdf" ? "Preparing PDF template..." : "Reading template...",
         done: false,
       });
 
       const templateBytes = await docxFile.arrayBuffer();
       const outZip = new JSZip();
 
-      if (outputFormat === "pdf") {
-        const conversion = await mammoth.convertToHtml({ arrayBuffer: templateBytes });
-        const templateHtml = conversion.value;
+      for (let i = 0; i < names.length; i++) {
+        const name = names[i];
+        const pct = 10 + (i / names.length) * 85;
+        setProgress({ pct, msg: `Generating ${i + 1}/${names.length}: ${name}`, done: false });
 
-        for (let i = 0; i < names.length; i++) {
-          const name = names[i];
-          const pct = 10 + (i / names.length) * 85;
-          setProgress({ pct, msg: `Generating ${i + 1}/${names.length}: ${name}`, done: false });
+        const filledDocxBlob = await createFilledDocxBlob(templateBytes, marker, name);
+        const safe = sanitizeFileName(name, `cert_${i + 1}`);
 
-          const result = replaceInHtml(templateHtml, marker, name);
-          if (!result.replaced) {
-            setProgress(null);
-            setError(`Placeholder \"${marker}\" was not found in template. Make sure it exactly matches the text inside the .docx file.`);
-            return;
-          }
-
-          const blob = await htmlToPdfBlob(result.html);
-          const safe = sanitizeFileName(name, `cert_${i + 1}`);
-          outZip.file(`${safe}.pdf`, blob);
-          await new Promise((r) => setTimeout(r, 0));
+        if (outputFormat === "pdf") {
+          const pdfBlob = await docxToPdfBlob(filledDocxBlob);
+          outZip.file(`${safe}.pdf`, pdfBlob);
+        } else {
+          outZip.file(`${safe}.docx`, filledDocxBlob);
         }
-      } else {
-        for (let i = 0; i < names.length; i++) {
-          const name = names[i];
-          const pct = 10 + (i / names.length) * 85;
-          setProgress({ pct, msg: `Generating ${i + 1}/${names.length}: ${name}`, done: false });
 
-          const docZip = await JSZip.loadAsync(templateBytes);
-          const xmlFiles = Object.keys(docZip.files).filter(
-            (n) => n.endsWith(".xml") || n.endsWith(".rels")
-          );
-          let foundAnyPlaceholder = false;
-
-          for (const xmlName of xmlFiles) {
-            const content = await docZip.files[xmlName].async("string");
-            const result = replaceInXml(content, marker, name);
-            if (result.replaced) {
-              foundAnyPlaceholder = true;
-              docZip.file(xmlName, result.xml);
-            }
-          }
-
-          if (!foundAnyPlaceholder) {
-            setProgress(null);
-            setError(`Placeholder \"${marker}\" was not found in template. Make sure it exactly matches the text inside the .docx file.`);
-            return;
-          }
-
-          const blob = await docZip.generateAsync({ type: "blob" });
-          const safe = sanitizeFileName(name, `cert_${i + 1}`);
-          outZip.file(`${safe}.docx`, blob);
-          await new Promise((r) => setTimeout(r, 0));
-        }
+        await new Promise((r) => setTimeout(r, 0));
       }
 
-      setProgress({ pct: 97, msg: "Creating ZIP…", done: false });
+      setProgress({ pct: 97, msg: "Creating ZIP...", done: false });
       const zipBlob = await outZip.generateAsync({ type: "blob" });
       setProgress({
         pct: 100,
@@ -225,7 +217,11 @@ export default function App() {
       setTimeout(() => URL.revokeObjectURL(a.href), 10000);
     } catch (err) {
       setProgress(null);
-      setError("Could not generate certificates: " + err.message);
+      if (err.code === "PLACEHOLDER_NOT_FOUND") {
+        setError(err.message);
+      } else {
+        setError("Could not generate certificates: " + err.message);
+      }
     }
   };
 
@@ -244,14 +240,13 @@ export default function App() {
         </div>
         <h1>Cert&thinsp;/&thinsp;Gen</h1>
         <p className="sub">
-          Upload template &amp; student list — choose DOCX or PDF output for the finished certificates
+          Upload template &amp; student list - choose DOCX or PDF output for the finished certificates
         </p>
       </header>
 
       <main>
-        {/* Step 1 */}
         <div className="step-card active">
-          <div className="step-num">01 — Upload Files</div>
+          <div className="step-num">01 - Upload Files</div>
           <div className="drop-row">
             <DropZone
               accept=".docx"
@@ -261,7 +256,10 @@ export default function App() {
               hint="Drop your Word template here or click to browse"
               filled={!!docxFile}
               fileName={docxFile?.name}
-              onFile={(f) => { setDocxFile(f); setError(""); }}
+              onFile={(f) => {
+                setDocxFile(f);
+                setError("");
+              }}
             />
             <DropZone
               accept=".xlsx,.xls"
@@ -276,9 +274,8 @@ export default function App() {
           </div>
         </div>
 
-        {/* Step 2 */}
         <div className="step-card">
-          <div className="step-num">02 — Settings</div>
+          <div className="step-num">02 - Settings</div>
           <div className="settings-row">
             <div className="field">
               <label htmlFor="format-select">Output format</label>
@@ -315,7 +312,9 @@ export default function App() {
                   <option>Upload Excel first</option>
                 ) : (
                   columns.map((c) => (
-                    <option key={c} value={c}>{c}</option>
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
                   ))
                 )}
               </select>
@@ -325,9 +324,12 @@ export default function App() {
 
           {names.length > 0 && (
             <div className="preview-pill">
-              <span>{names.length} student{names.length !== 1 ? "s" : ""} —&nbsp;</span>
+              <span>
+                {names.length} student{names.length !== 1 ? "s" : ""} -&nbsp;
+              </span>
               <span className="preview-names">
-                {names.slice(0, 3).join(", ")}{names.length > 3 ? " …" : ""}
+                {names.slice(0, 3).join(", ")}
+                {names.length > 3 ? " ..." : ""}
               </span>
             </div>
           )}
@@ -336,20 +338,27 @@ export default function App() {
         {error && <div className="error-card">{error}</div>}
 
         <button className="btn-gen" disabled={!canGenerate} onClick={generate}>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-            <polyline points="7 10 12 15 17 10"/>
-            <line x1="12" y1="15" x2="12" y2="3"/>
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+            <polyline points="7 10 12 15 17 10" />
+            <line x1="12" y1="15" x2="12" y2="3" />
           </svg>
-            Generate &amp; Download {outputFormat.toUpperCase()} ZIP
+          Generate &amp; Download {outputFormat.toUpperCase()} ZIP
         </button>
 
         {progress && <ProgressCard progress={progress} />}
       </main>
 
-      <footer>
-        All processing happens in your browser — no data is uploaded anywhere.
-      </footer>
+      <footer>All processing happens in your browser - no data is uploaded anywhere.</footer>
     </div>
   );
 }
