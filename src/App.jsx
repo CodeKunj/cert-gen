@@ -40,6 +40,13 @@ function sanitizeFileName(name, fallback) {
   return name.replace(/[^a-zA-Z0-9 _\-]/g, "").replace(/\s+/g, "_") || fallback;
 }
 
+function keepReplacementOnOneLine(value) {
+  return String(value || "")
+    .trim()
+    .replace(/ /g, "\u00A0")
+    .replace(/-/g, "\u2011");
+}
+
 async function createFilledDocxBlob(templateBytes, marker, name) {
   const docZip = await JSZip.loadAsync(templateBytes);
   const xmlFiles = Object.keys(docZip.files).filter(
@@ -216,10 +223,11 @@ export default function App() {
 
       for (let i = 0; i < names.length; i++) {
         const name = names[i];
+        const singleLineName = keepReplacementOnOneLine(name);
         const pct = 10 + (i / names.length) * 85;
         setProgress({ pct, msg: `Generating ${i + 1}/${names.length}: ${name}`, done: false });
 
-        const filledDocxBlob = await createFilledDocxBlob(templateBytes, marker, name);
+        const filledDocxBlob = await createFilledDocxBlob(templateBytes, marker, singleLineName);
         const safe = sanitizeFileName(name, `cert_${i + 1}`);
 
         if (outputFormat === "pdf") {
