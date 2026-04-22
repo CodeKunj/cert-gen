@@ -27,38 +27,6 @@ Then rebuild/redeploy frontend.
 
 ## Local run for converter service
 
-### Full app with Docker Compose
-
-From the repo root:
-
-```bash
-docker compose up --build
-```
-
-This starts both services:
-- Frontend on `http://localhost:5173`
-- Converter on `http://localhost:8080`
-
-The frontend is already configured inside Compose to call the converter service by container name.
-
-### Docker Compose
-
-From the `converter-service/` folder:
-
-```bash
-docker compose up --build
-```
-
-This starts the exact PDF converter on `http://localhost:8080`.
-
-### Frontend env for local testing
-
-In the app root, set:
-
-`VITE_CONVERTER_API_URL=http://localhost:8080/convert`
-
-Then run the frontend with `npm run dev`.
-
 ### Plain Node run
 
 ```bash
@@ -67,7 +35,15 @@ npm install
 npm start
 ```
 
-Runs on `http://localhost:8080` by default.
+Runs on `http://localhost:8080` by default if LibreOffice is installed on the host.
+
+### Frontend env
+
+In the app root, set:
+
+`VITE_CONVERTER_API_URL=https://your-converter-host/convert`
+
+Then run the frontend with `npm run dev` or rebuild for production.
 
 ## Notes
 
