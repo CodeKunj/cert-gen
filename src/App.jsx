@@ -83,11 +83,29 @@ async function convertDocxBlobToPdfInBrowser(docxBlob) {
       inWrapper: true,
       useBase64URL: true,
       breakPages: true,
+      renderHeaders: true,
+      renderFooters: true,
+      renderFootnotes: true,
     });
 
-    await new Promise((resolve) => {
-      requestAnimationFrame(() => requestAnimationFrame(resolve));
-    });
+    const images = Array.from(host.querySelectorAll("img"));
+    await Promise.all(
+      images.map(
+        (img) =>
+          img.complete
+            ? Promise.resolve()
+            : new Promise((resolve) => {
+                img.onload = resolve;
+                img.onerror = resolve;
+              })
+      )
+    );
+
+    if (document.fonts?.ready) {
+      await document.fonts.ready;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 120));
 
     const pageNodes = host.querySelectorAll(".docx-page");
     const targets = pageNodes.length ? Array.from(pageNodes) : [host];
@@ -95,11 +113,25 @@ async function convertDocxBlobToPdfInBrowser(docxBlob) {
 
     for (let i = 0; i < targets.length; i++) {
       const page = targets[i];
+      const width = Math.ceil(page.scrollWidth || page.clientWidth || 1123);
+      const height = Math.ceil(page.scrollHeight || page.clientHeight || 794);
+
+      const originalBoxShadow = page.style.boxShadow;
+      page.style.boxShadow = "none";
+
       const canvas = await html2canvas(page, {
         backgroundColor: "#ffffff",
-        scale: 2,
+        scale: Math.min(3, Math.max(2, window.devicePixelRatio || 2)),
         useCORS: true,
+        width,
+        height,
+        windowWidth: width,
+        windowHeight: height,
+        scrollX: 0,
+        scrollY: 0,
       });
+
+      page.style.boxShadow = originalBoxShadow;
 
       const orientation = canvas.width >= canvas.height ? "landscape" : "portrait";
 
