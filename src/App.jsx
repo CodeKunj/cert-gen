@@ -40,18 +40,6 @@ function sanitizeFileName(name, fallback) {
   return name.replace(/[^a-zA-Z0-9 _\-]/g, "").replace(/\s+/g, "_") || fallback;
 }
 
-function fitReplacementText(value, maxChars) {
-  const text = String(value || "").trim();
-  const n = Number(maxChars);
-  if (!Number.isFinite(n) || n <= 0) {
-    return text;
-  }
-  if (text.length <= n) {
-    return text;
-  }
-  return text.slice(0, n).trimEnd();
-}
-
 async function createFilledDocxBlob(templateBytes, marker, name) {
   const docZip = await JSZip.loadAsync(templateBytes);
   const xmlFiles = Object.keys(docZip.files).filter(
@@ -177,7 +165,6 @@ export default function App() {
   const [columns, setColumns] = useState([]);
   const [selectedCol, setSelectedCol] = useState("");
   const [placeholder, setPlaceholder] = useState("{{NAME}}");
-  const [maxChars, setMaxChars] = useState("");
   const [outputFormat, setOutputFormat] = useState("docx");
   const [progress, setProgress] = useState(null);
   const [error, setError] = useState("");
@@ -229,11 +216,10 @@ export default function App() {
 
       for (let i = 0; i < names.length; i++) {
         const name = names[i];
-        const fittedName = fitReplacementText(name, maxChars);
         const pct = 10 + (i / names.length) * 85;
         setProgress({ pct, msg: `Generating ${i + 1}/${names.length}: ${name}`, done: false });
 
-        const filledDocxBlob = await createFilledDocxBlob(templateBytes, marker, fittedName);
+        const filledDocxBlob = await createFilledDocxBlob(templateBytes, marker, name);
         const safe = sanitizeFileName(name, `cert_${i + 1}`);
 
         if (outputFormat === "pdf") {
@@ -345,19 +331,6 @@ export default function App() {
                 placeholder="{{NAME}}"
               />
               <span className="field-hint">Text in your template to replace</span>
-            </div>
-            <div className="field">
-              <label htmlFor="max-chars">Max characters (fit)</label>
-              <input
-                id="max-chars"
-                type="number"
-                min="1"
-                step="1"
-                value={maxChars}
-                onChange={(e) => setMaxChars(e.target.value)}
-                placeholder="Leave empty for full text"
-              />
-              <span className="field-hint">Trim replacement text so it fits fixed template space</span>
             </div>
             <div className="field">
               <label htmlFor="col-select">Name column</label>
